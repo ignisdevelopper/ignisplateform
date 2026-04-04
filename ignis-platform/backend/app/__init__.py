@@ -96,6 +96,8 @@ Glossaire S&D
   LH/LL Lower High / Lower Low (tendance baissière)
 """
 
+from enum import Enum
+
 # ── Version sémantique ─────────────────────────────────────────────────────────
 __version__ = "1.0.0"
 __version_info__ = (1, 0, 0)
@@ -138,7 +140,7 @@ ASSET_CLASSES = {
 }
 
 # ── Statuts de setup ───────────────────────────────────────────────────────────
-class SetupStatus:
+class SetupStatus(str, Enum):
     VALID   = "VALID"     # SB + SDE + SGB + SDP + PA + DP + KL tous alignés
     PENDING = "PENDING"   # SDE trouvé, en attente SGB ou prix en route vers DP
     INVALID = "INVALID"   # HEAD vient de FLIPPY, FTB déjà pris, ou DDP présent
@@ -146,7 +148,7 @@ class SetupStatus:
     EXPIRED = "EXPIRED"   # Zone invalidée (prix l'a traversée)
 
 # ── Types de zones S&D ─────────────────────────────────────────────────────────
-class ZoneType:
+class ZoneType(str, Enum):
     DEMAND       = "DEMAND"        # Zone de demande (support)
     SUPPLY       = "SUPPLY"        # Zone d'offre (résistance)
     FLIPPY_D     = "FLIPPY_D"      # Ancienne supply devenue demand
@@ -155,14 +157,14 @@ class ZoneType:
     HIDDEN_S     = "HIDDEN_S"      # Supply cachée (LTF)
 
 # ── Types de base ──────────────────────────────────────────────────────────────
-class BaseType:
+class BaseType(str, Enum):
     RBR = "RBR"   # Rally-Base-Rally (continuation haussière)
     DBD = "DBD"   # Drop-Base-Drop  (continuation baissière)
     RBD = "RBD"   # Rally-Base-Drop (retournement bearish)
     DBR = "DBR"   # Drop-Base-Rally (retournement bullish)
 
 # ── Types de patterns PA ───────────────────────────────────────────────────────
-class PAPattern:
+class PAPattern(str, Enum):
     ACCU          = "ACCU"          # Accumulation escalier
     THREE_DRIVES  = "THREE_DRIVES"  # 3 Drives (le plus puissant)
     FTL           = "FTL"           # Flip Trend Line
@@ -171,14 +173,14 @@ class PAPattern:
     NONE          = "NONE"          # Pas de PA détecté
 
 # ── Types de Decision Point ────────────────────────────────────────────────────
-class DPType:
+class DPType(str, Enum):
     SDP           = "SDP"           # Successful Decision Point (HEAD tenu)
     SB_LEVEL      = "SB_LEVEL"      # Niveau Structure Breaker
     TREND_LINE    = "TREND_LINE"    # Ligne de tendance retournée
     KEY_LEVEL     = "KEY_LEVEL"     # Old high/low, round number, S/R flip
 
 # ── Phases de marché ───────────────────────────────────────────────────────────
-class MarketPhase:
+class MarketPhase(str, Enum):
     RALLY  = "RALLY"   # Tendance haussière impulsive
     DROP   = "DROP"    # Tendance baissière impulsive
     BASE   = "BASE"    # Consolidation / zone de base
