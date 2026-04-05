@@ -1,0 +1,127 @@
+/* ══════════════════════════════════════════════════════════════
+   ignis-theme.css
+   Variables de design IGNIS — Glassmorphism + iOS 26 Liquid Glass
+   ══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Brand ────────────────────────────────────────────────── */
+  --ignis-orange:   #E85D1A;
+  --ignis-blue:     #378ADD;
+  --ignis-green:    #1D9E75;
+  --ignis-red:      #E24B4A;
+  --ignis-amber:    #F59E0B;
+  --ignis-zinc:     #A1A1AA;
+
+  /* ── Background ───────────────────────────────────────────── */
+  --bg-base:        #0A0A0F;
+  --bg-card:        rgba(255, 255, 255, 0.05);
+  --bg-card-dark:   rgba(0, 0, 0, 0.25);
+  --bg-hover:       rgba(255, 255, 255, 0.08);
+  --bg-active:      rgba(255, 255, 255, 0.12);
+
+  /* ── Text ─────────────────────────────────────────────────── */
+  --text-primary:   rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.60);
+  --text-muted:     rgba(255, 255, 255, 0.38);
+  --text-hint:      rgba(255, 255, 255, 0.22);
+
+  /* ── Borders ──────────────────────────────────────────────── */
+  --border:         rgba(255, 255, 255, 0.10);
+  --border-strong:  rgba(255, 255, 255, 0.18);
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+
+  /* ── Glass ────────────────────────────────────────────────── */
+  --glass-bg:       rgba(255, 255, 255, 0.05);
+  --glass-blur:     blur(20px);
+  --glass-shadow:   0 25px 80px rgba(0, 0, 0, 0.55);
+
+  /* ── Radius ───────────────────────────────────────────────── */
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-xl:   20px;
+  --radius-2xl:  24px;
+  --radius-3xl:  32px;
+
+  /* ── Zone colors ──────────────────────────────────────────── */
+  --zone-demand:   #1D9E75;
+  --zone-supply:   #E24B4A;
+  --zone-flippy-d: #378ADD;
+  --zone-flippy-s: #E85D1A;
+  --zone-hidden-d: #2AD4A5;
+  --zone-hidden-s: #FF6B6A;
+
+  /* ── Setup status colors ──────────────────────────────────── */
+  --status-valid:   #1D9E75;
+  --status-pending: #F59E0B;
+  --status-invalid: #E24B4A;
+  --status-watch:   #378ADD;
+  --status-expired: #A1A1AA;
+
+  /* ── Transitions ──────────────────────────────────────────── */
+  --transition-fast:   150ms ease;
+  --transition-base:   200ms ease;
+  --transition-slow:   350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Glass card component ─────────────────────────────────── */
+.ignis-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3xl);
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+}
+
+/* ── Glow effects per brand color ─────────────────────────── */
+.glow-orange { box-shadow: 0 0 28px rgba(232,  93,  26, 0.25); }
+.glow-blue   { box-shadow: 0 0 28px rgba( 55, 138, 221, 0.25); }
+.glow-green  { box-shadow: 0 0 28px rgba( 29, 158, 117, 0.25); }
+.glow-red    { box-shadow: 0 0 28px rgba(226,  75,  74, 0.25); }
+
+/* ── Score badge sizes ────────────────────────────────────── */
+.score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 2px 8px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Status pill ──────────────────────────────────────────── */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid;
+}
+
+.status-pill.valid   { color: var(--status-valid);   border-color: var(--status-valid);   background: rgba(29,158,117,0.12); }
+.status-pill.pending { color: var(--status-pending); border-color: var(--status-pending); background: rgba(245,158,11,0.12); }
+.status-pill.invalid { color: var(--status-invalid); border-color: var(--status-invalid); background: rgba(226,75,74,0.12);  }
+.status-pill.watch   { color: var(--status-watch);   border-color: var(--status-watch);   background: rgba(55,138,221,0.12); }
+.status-pill.expired { color: var(--status-expired); border-color: var(--status-expired); background: rgba(161,161,170,0.12);}
+
+/* ── Ambient background glows (appliqués sur body) ────────── */
+.ignis-glow-bg::before {
+  content: '';
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 420px 420px at 33% 0%,   rgba(232, 93,  26, 0.12), transparent),
+    radial-gradient(ellipse 360px 360px at 75% 33%,  rgba( 55,138, 221, 0.10), transparent),
+    radial-gradient(ellipse 360px 360px at 25% 100%, rgba( 29,158, 117, 0.09), transparent);
+}
