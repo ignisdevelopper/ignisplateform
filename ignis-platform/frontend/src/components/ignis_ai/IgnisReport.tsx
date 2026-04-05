@@ -3,6 +3,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { clamp } from '@/lib/utils';
 
 type SetupStatus = 'VALID' | 'PENDING' | 'INVALID' | 'WATCH' | 'EXPIRED' | string;
 

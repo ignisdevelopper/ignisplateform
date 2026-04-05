@@ -3,6 +3,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 type BaseType = 'RBR' | 'DBD' | 'RBD' | 'DBR';
 
@@ -141,7 +142,7 @@ export default function BaseScorePanel({
               {derived.total} bases
             </span>
             <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-              avg {derived.avgScore !== undefined ? `${fmt(derived.avgScore, 1)}%` : '—'}
+              avg {derived.avgScore !== undefined ? `${(derived.avgScore)?.toFixed(1) ?? '—'}%` : '—'}
             </span>
             <button
               onClick={() => setExpanded((p) => !p)}
@@ -254,7 +255,7 @@ export default function BaseScorePanel({
                     <div className="text-xs text-white/60">
                       {filtered.length} shown
                       <span className="mx-2 text-white/20">·</span>
-                      best: <span className="text-white/80">{derived.best ? `${derived.best.base_type} ${fmt(derived.best.score, 0)}%` : '—'}</span>
+                      best: <span className="text-white/80">{derived.best ? `${derived.best.base_type} ${(derived.best.score)?.toFixed(0) ?? '—'}%` : '—'}</span>
                     </div>
                     <div className="text-[11px] text-white/50">
                       Tip: clique une base pour voir les détails.
@@ -301,8 +302,8 @@ export default function BaseScorePanel({
                               </div>
 
                               <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-                                <MiniStat label="Top" value={fmt(b.zone_top, 6)} />
-                                <MiniStat label="Bot" value={fmt(b.zone_bot, 6)} />
+                                <MiniStat label="Top" value={(b.zone_top)?.toFixed(6) ?? '—'} />
+                                <MiniStat label="Bot" value={(b.zone_bot)?.toFixed(6) ?? '—'} />
                                 <MiniStat label="Touches" value={String(b.touch_count ?? 0)} />
                                 <MiniStat label="Candles" value={String(b.candle_count ?? 0)} />
                               </div>
@@ -310,13 +311,13 @@ export default function BaseScorePanel({
                               <div className="mt-2 text-[11px] text-white/50">
                                 Formed: <span className="text-white/70">{fmtTs(b.formed_at)}</span>
                                 <span className="mx-2 text-white/20">·</span>
-                                Engulf: <span className="text-white/70">{fmt(b.engulfment_ratio, 2)}</span>
+                                Engulf: <span className="text-white/70">{(b.engulfment_ratio)?.toFixed(2) ?? '—'}</span>
                               </div>
                             </div>
 
                             <div className="text-right">
                               <div className="text-[11px] text-white/55">Score</div>
-                              <div className="text-2xl font-semibold tracking-tight">{fmt(b.score, 0)}%</div>
+                              <div className="text-2xl font-semibold tracking-tight">{(b.score)?.toFixed(0) ?? '—'}%</div>
                               <div className="mt-2">
                                 <ScoreBar value={b.score} />
                               </div>
@@ -347,7 +348,7 @@ export default function BaseScorePanel({
 
                       {selected && (
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-                          {fmt(selected.score, 0)}%
+                          {(selected.score)?.toFixed(0) ?? '—'}%
                         </span>
                       )}
                     </div>
@@ -357,10 +358,10 @@ export default function BaseScorePanel({
                         <div className="grid grid-cols-2 gap-2">
                           <MiniStat label="ID" value={selected.id} />
                           <MiniStat label="Formed" value={fmtTs(selected.formed_at)} />
-                          <MiniStat label="Zone top" value={fmt(selected.zone_top, 6)} />
-                          <MiniStat label="Zone bot" value={fmt(selected.zone_bot, 6)} />
-                          <MiniStat label="Range" value={fmt(Math.abs(selected.zone_top - selected.zone_bot), 6)} />
-                          <MiniStat label="Engulf ratio" value={fmt(selected.engulfment_ratio, 2)} />
+                          <MiniStat label="Zone top" value={(selected.zone_top)?.toFixed(6) ?? '—'} />
+                          <MiniStat label="Zone bot" value={(selected.zone_bot)?.toFixed(6) ?? '—'} />
+                          <MiniStat label="Range" value={(Math.abs(selected.zone_top - selected.zone_bot)?.toFixed(2) ?? '—', 6)} />
+                          <MiniStat label="Engulf ratio" value={(selected.engulfment_ratio)?.toFixed(2) ?? '—'} />
                         </div>
 
                         <div className="rounded-xl border border-white/10 bg-black/30 p-3">
@@ -396,7 +397,7 @@ export default function BaseScorePanel({
                           <div className="mt-3">
                             <div className="flex items-center justify-between text-[11px] text-white/55 mb-1">
                               <span>Score</span>
-                              <span className="text-white/70">{fmt(selected.score, 0)}%</span>
+                              <span className="text-white/70">{(selected.score)?.toFixed(0) ?? '—'}%</span>
                             </div>
                             <ScoreBar value={selected.score} />
                           </div>

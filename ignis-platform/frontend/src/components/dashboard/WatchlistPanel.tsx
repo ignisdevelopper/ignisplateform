@@ -5,7 +5,7 @@ import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 
-import AssetCard, { type AssetResponse } from './assetcard';
+import AssetCard, { type AssetResponse } from './AssetCard';
 
 type SetupStatus = 'VALID' | 'PENDING' | 'INVALID' | 'WATCH' | 'EXPIRED';
 type AssetClass = 'CRYPTO' | 'STOCK' | 'FOREX' | 'COMMODITY' | 'INDEX' | 'ETF' | 'OTHER';

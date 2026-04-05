@@ -9,10 +9,10 @@ type StatusState = 'ONLINE' | 'OFFLINE' | 'CONNECTING' | 'DEGRADED' | 'UNKNOWN';
 type Breadcrumb = { label: string; href?: string };
 
 type NavbarAction =
-  | { key: 'scanner'; label: string; href: string }
-  | { key: 'ai'; label: string; href: string }
-  | { key: 'journal'; label: string; href: string }
-  | { key: 'settings'; label: string; href: string }
+  | { key: 'scanner'; label: string; href: string; onClick?: () => void }
+  | { key: 'ai'; label: string; href: string; onClick?: () => void }
+  | { key: 'journal'; label: string; href: string; onClick?: () => void }
+  | { key: 'settings'; label: string; href: string; onClick?: () => void }
   | { key: string; label: string; href?: string; onClick?: () => void };
 
 type AIStatusResponse = {

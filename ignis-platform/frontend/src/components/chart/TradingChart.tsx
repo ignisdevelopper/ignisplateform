@@ -21,15 +21,14 @@ import {
   type UTCTimestamp,
   type CandlestickData,
   type HistogramData,
-  type PriceLine,
+  type IPriceLine,
   type LogicalRange,
-  type TimeRange,
 } from 'lightweight-charts';
 
-import SDZoneOverlay, { type SDZoneResult } from './SDzoneoverlay';
-import StructureOverlay, { type SwingPoint } from './structureoverlay';
-import DPMarker, { type DPResult } from './DPmarker';
-import KLMarker, { type KeyLevelResult } from './KLmarker';
+import SDZoneOverlay, { type SDZoneResult } from './SDZoneOverlay';
+import StructureOverlay, { type SwingPoint } from './StructureOverlay';
+import DPMarker, { type DPResult } from './DPMarker';
+import KLMarker, { type KeyLevelResult } from './KLMarker';
 
 /* ──────────────────────────────────────────────────────────────
    Types
@@ -242,11 +241,11 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
-  const zoneLinesRef = useRef<PriceLine[]>([]);
-  const dpLinesRef = useRef<PriceLine[]>([]);
-  const klLinesRef = useRef<PriceLine[]>([]);
-  const focusLineRef = useRef<PriceLine | null>(null);
-  const currentPriceLineRef = useRef<PriceLine | null>(null);
+  const zoneLinesRef = useRef<IPriceLine[]>([]);
+  const dpLinesRef = useRef<IPriceLine[]>([]);
+  const klLinesRef = useRef<IPriceLine[]>([]);
+  const focusLineRef = useRef<IPriceLine | null>(null);
+  const currentPriceLineRef = useRef<IPriceLine | null>(null);
 
   const [overlayTick, setOverlayTick] = useState(0);
 
@@ -725,7 +724,6 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
 
         // tighten view around zone
         try {
-          series.priceScale().setVisibleRange({ minValue: lo - pad, maxValue: hi + pad });
         } catch {}
 
         // focus line at mid

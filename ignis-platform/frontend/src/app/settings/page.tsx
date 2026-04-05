@@ -58,8 +58,8 @@ interface AssetStatsResponse {
   active: number;
   by_class: Record<string, number>;
   with_analysis: number;
-  valid_setups: int;
-  pending_setups: int;
+  valid_setups: number;
+  pending_setups: number;
 }
 
 interface AlertStatsResponse {
