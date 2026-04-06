@@ -5,973 +5,615 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 
-/* ──────────────────────────────────────────────────────────────
-   Config
-────────────────────────────────────────────────────────────── */
-
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? 'http://localhost:8000/api/v1';
-
-const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws';
-
-/* ──────────────────────────────────────────────────────────────
-   Types (best-effort based on your schemas)
-────────────────────────────────────────────────────────────── */
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws';
 
 type SetupStatus = 'VALID' | 'PENDING' | 'INVALID' | 'WATCH' | 'EXPIRED';
 type ZoneType = 'DEMAND' | 'SUPPLY' | 'FLIPPY_D' | 'FLIPPY_S' | 'HIDDEN_D' | 'HIDDEN_S';
 type PAPattern = 'ACCU' | 'THREE_DRIVES' | 'FTL' | 'PATTERN_69' | 'HIDDEN_SDE' | 'NONE';
-
 type AssetClass = 'CRYPTO' | 'STOCK' | 'FOREX' | 'COMMODITY' | 'INDEX' | 'ETF' | 'OTHER';
 
 interface AssetResponse {
-  symbol: string;
-  asset_class: string;
-  name: string;
-  exchange: string;
-  active: boolean;
-  last_price?: number;
-  last_analysis_at?: string;
-  setup?: {
-    status: SetupStatus;
-    score: number;
-    zone_type?: ZoneType;
-    pa_pattern?: PAPattern;
-    rr?: number;
-  };
-  created_at: string;
-  updated_at: string;
-  meta?: any;
+  symbol: string; asset_class: string; name: string; exchange: string;
+  active: boolean; last_price?: number; last_analysis_at?: string;
+  setup?: { status: SetupStatus; score: number; zone_type?: ZoneType; pa_pattern?: PAPattern; rr?: number };
+  created_at: string; updated_at: string; meta?: any;
 }
-
-interface AssetsListResponse {
-  total: number;
-  assets: AssetResponse[];
-  page?: number;
-  page_size?: number;
-}
-
+interface AssetsListResponse { total: number; assets: AssetResponse[] }
 interface AssetStatsResponse {
-  total: number;
-  active: number;
-  by_class: Record<string, number>;
-  with_analysis: number;
-  valid_setups: number;
-  pending_setups: number;
+  total: number; active: number; by_class: Record<string, number>;
+  with_analysis: number; valid_setups: number; pending_setups: number;
+}
+interface AlertEvent {
+  id: string; alert_type: string; priority: string; symbol: string;
+  timeframe: string; title: string; message: string; emoji?: string;
+  payload: any; channels: string[]; status: string; created_at: string;
 }
 
-interface AlertResponse {
-  id: string;
-  alert_type: string;
-  priority: string;
-  symbol: string;
-  timeframe: string;
-  title: string;
-  message: string;
-  emoji?: string;
-  payload: any;
-  channels: string[];
-  status: string;
-  created_at: string;
-  sent_at?: string;
+function cn(...c: Array<string | undefined | null | false>) { return c.filter(Boolean).join(' '); }
+function fmt(n?: number | null, d = 2) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(n);
 }
-
-type AlertEvent = AlertResponse & { timestamp?: string };
-
-type WSIn =
-  | { type: 'subscribe'; room: 'alerts' | 'prices' }
-  | { type: 'unsubscribe'; room: 'alerts' | 'prices' }
-  | { type: 'ping' };
-
-type WSOut =
-  | { type: 'alert'; data: AlertEvent }
-  | { type: 'price_update'; data: { symbol: string; price: number; timestamp: string | number } }
-  | { type: 'pong' }
-  | { type: string; data?: any };
-
-/* ──────────────────────────────────────────────────────────────
-   Helpers
-────────────────────────────────────────────────────────────── */
-
-function cn(...classes: Array<string | undefined | null | false>) {
-  return classes.filter(Boolean).join(' ');
-}
-
-function fmt(n: number | undefined, digits = 2) {
-  if (n === undefined || n === null || Number.isNaN(n)) return '—';
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: digits }).format(n);
-}
-
-function fmtDate(iso: string | undefined) {
+function fmtDate(iso?: string | null) {
   if (!iso) return '—';
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('fr-FR', { hour12: false });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('fr-FR', { hour12: false });
+}
+function timeAgo(iso?: string | null) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  if (ms < 86400000) return `${Math.round(ms / 3600000)}h`;
+  return `${Math.round(ms / 86400000)}j`;
 }
 
-function statusPill(status: SetupStatus) {
-  switch (status) {
-    case 'VALID':
-      return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200';
-    case 'PENDING':
-      return 'border-sky-500/25 bg-sky-500/10 text-sky-200';
-    case 'WATCH':
-      return 'border-amber-500/25 bg-amber-500/10 text-amber-200';
-    case 'INVALID':
-      return 'border-rose-500/25 bg-rose-500/10 text-rose-200';
-    case 'EXPIRED':
-      return 'border-zinc-500/25 bg-zinc-500/10 text-zinc-200';
-    default:
-      return 'border-white/10 bg-white/5 text-white/70';
-  }
-}
-
-function priorityPill(priority: string) {
-  const p = (priority ?? '').toUpperCase();
-  if (p === 'CRITICAL') return 'border-rose-500/25 bg-rose-500/10 text-rose-200';
-  if (p === 'HIGH') return 'border-orange-500/25 bg-orange-500/10 text-orange-200';
-  if (p === 'MEDIUM') return 'border-sky-500/25 bg-sky-500/10 text-sky-200';
-  return 'border-white/10 bg-white/5 text-white/70';
-}
-
-function zoneColor(z?: ZoneType) {
-  if (!z) return 'rgba(255,255,255,0.35)';
-  const m: Record<ZoneType, string> = {
-    DEMAND: '#1D9E75',
-    SUPPLY: '#E24B4A',
-    FLIPPY_D: '#378ADD',
-    FLIPPY_S: '#E85D1A',
-    HIDDEN_D: '#2AD4A5',
-    HIDDEN_S: '#FF6B6A',
-  };
-  return m[z] ?? 'rgba(255,255,255,0.35)';
-}
-
-function scoreGradient(score: number) {
-  if (score >= 85) return 'from-emerald-400/55 to-emerald-700/10';
-  if (score >= 70) return 'from-orange-400/55 to-orange-700/10';
-  if (score >= 55) return 'from-amber-400/55 to-amber-700/10';
-  return 'from-rose-400/55 to-rose-700/10';
-}
-
-/* ──────────────────────────────────────────────────────────────
-   Dashboard page
-────────────────────────────────────────────────────────────── */
+const STATUS_META: Record<string, { label: string; color: string; bg: string; dot: string }> = {
+  VALID:   { label: 'Valide',      color: '#10b981', bg: 'rgba(16,185,129,0.08)',  dot: '#10b981' },
+  PENDING: { label: 'En cours',    color: '#38bdf8', bg: 'rgba(56,189,248,0.08)',  dot: '#38bdf8' },
+  WATCH:   { label: 'Surveiller',  color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', dot: '#f59e0b' },
+  INVALID: { label: 'Invalide',    color: '#f43f5e', bg: 'rgba(244,63,94,0.08)',   dot: '#f43f5e' },
+  EXPIRED: { label: 'Expiré',      color: '#71717a', bg: 'rgba(113,113,122,0.08)', dot: '#71717a' },
+};
+const ZONE_META: Record<string, { label: string; color: string }> = {
+  DEMAND:   { label: 'Demande',        color: '#10b981' },
+  SUPPLY:   { label: 'Offre',          color: '#f43f5e' },
+  FLIPPY_D: { label: 'Flippy Demande', color: '#38bdf8' },
+  FLIPPY_S: { label: 'Flippy Offre',   color: '#e85d1a' },
+  HIDDEN_D: { label: 'Cachée D',       color: '#2dd4bf' },
+  HIDDEN_S: { label: 'Cachée S',       color: '#fb923c' },
+};
+const PRIORITY_META: Record<string, { color: string; bg: string }> = {
+  CRITICAL: { color: '#f43f5e', bg: 'rgba(244,63,94,0.10)'   },
+  HIGH:     { color: '#f97316', bg: 'rgba(249,115,22,0.10)'  },
+  MEDIUM:   { color: '#38bdf8', bg: 'rgba(56,189,248,0.10)'  },
+  LOW:      { color: '#71717a', bg: 'rgba(113,113,122,0.10)' },
+};
 
 export default function DashboardPage() {
-  // navigation / filters
   const [assetClass, setAssetClass] = useState<AssetClass | 'ALL'>('CRYPTO');
-  const [activeOnly, setActiveOnly] = useState<boolean>(true);
-  const [query, setQuery] = useState<string>('');
-  const [limit, setLimit] = useState<number>(60);
-  const [offset, setOffset] = useState<number>(0);
-
-  // data
-  const [assetsLoading, setAssetsLoading] = useState<boolean>(false);
-  const [assetsTotal, setAssetsTotal] = useState<number>(0);
+  const [activeOnly, setActiveOnly] = useState(true);
+  const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(60);
+  const [offset, setOffset] = useState(0);
   const [assets, setAssets] = useState<AssetResponse[]>([]);
-  const [statsLoading, setStatsLoading] = useState<boolean>(false);
+  const [assetsTotal, setAssetsTotal] = useState(0);
+  const [assetsLoading, setAssetsLoading] = useState(false);
   const [stats, setStats] = useState<AssetStatsResponse | null>(null);
-
-  // alerts
-  const [alertsLoading, setAlertsLoading] = useState<boolean>(false);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
-  const [alertLimit, setAlertLimit] = useState<number>(30);
-
-  // ws
-  const wsRef = useRef<WebSocket | null>(null);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alertLimit] = useState(30);
   const [wsStatus, setWsStatus] = useState<'DISCONNECTED' | 'CONNECTING' | 'CONNECTED'>('DISCONNECTED');
-
-  // UX
-  const [error, setError] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'watchlist' | 'alertes'>('watchlist');
+  const [selectedAsset, setSelectedAsset] = useState<AssetResponse | null>(null);
 
   const page = useMemo(() => Math.floor(offset / limit) + 1, [offset, limit]);
   const pageCount = useMemo(() => Math.max(1, Math.ceil(assetsTotal / limit)), [assetsTotal, limit]);
-
-  const filteredAssets = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
     if (!q) return assets;
-    return assets.filter((a) => {
-      const hay = `${a.symbol} ${a.name ?? ''} ${a.exchange ?? ''} ${a.asset_class ?? ''}`.toUpperCase();
-      return hay.includes(q);
-    });
+    return assets.filter(a => `${a.symbol} ${a.name ?? ''} ${a.exchange ?? ''}`.toUpperCase().includes(q));
   }, [assets, query]);
-
-  const keyKPIs = useMemo(() => {
-    const valid = stats?.valid_setups ?? 0;
-    const pending = stats?.pending_setups ?? 0;
+  const kpis = useMemo(() => {
     const active = stats?.active ?? 0;
-    const withAnalysis = stats?.with_analysis ?? 0;
-    const coverage = active > 0 ? Math.round((withAnalysis / active) * 100) : 0;
-
-    return { valid, pending, active, withAnalysis, coverage };
+    const withAn = stats?.with_analysis ?? 0;
+    return { active, withAnalysis: withAn, coverage: active > 0 ? Math.round((withAn / active) * 100) : 0, valid: stats?.valid_setups ?? 0, pending: stats?.pending_setups ?? 0, total: stats?.total ?? 0 };
   }, [stats]);
 
-  /* ──────────────────────────────────────────────────────────────
-     Fetchers
-  ─────────────────────────────────────────────────────────────── */
-
   const fetchAssets = useCallback(async () => {
-    setError(null);
-    setAssetsLoading(true);
+    setAssetsLoading(true); setError(null);
     try {
       const url = new URL(`${API_BASE}/assets`);
       if (assetClass !== 'ALL') url.searchParams.set('asset_class', assetClass);
       url.searchParams.set('active', activeOnly ? 'true' : 'false');
       url.searchParams.set('limit', String(limit));
       url.searchParams.set('offset', String(offset));
-
-      const res = await fetch(url.toString(), { method: 'GET' });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} — ${txt || 'Erreur assets'}`);
-      }
-
-      const data = (await res.json()) as AssetsListResponse;
-      setAssets(data.assets ?? []);
-      setAssetsTotal(Number(data.total ?? (data.assets?.length ?? 0)));
-    } catch (e: any) {
-      setError(e?.message ?? 'Erreur inconnue (assets)');
-    } finally {
-      setAssetsLoading(false);
-    }
+      const res = await fetch(url.toString());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as AssetsListResponse;
+      setAssets(data.assets ?? []); setAssetsTotal(Number(data.total ?? data.assets?.length ?? 0));
+    } catch (e: any) { setError(e?.message ?? 'Erreur assets'); }
+    finally { setAssetsLoading(false); }
   }, [assetClass, activeOnly, limit, offset]);
 
   const fetchStats = useCallback(async () => {
-    setError(null);
     setStatsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/assets/stats`, { method: 'GET' });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} — ${txt || 'Erreur stats'}`);
-      }
-      const data = (await res.json()) as AssetStatsResponse;
-      setStats(data);
-    } catch (e: any) {
-      setError(e?.message ?? 'Erreur inconnue (stats)');
-    } finally {
-      setStatsLoading(false);
-    }
+      const res = await fetch(`${API_BASE}/assets/stats`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStats(await res.json() as AssetStatsResponse);
+    } catch {} finally { setStatsLoading(false); }
   }, []);
 
-  const fetchRecentAlerts = useCallback(async () => {
-    setError(null);
+  const fetchAlerts = useCallback(async () => {
     setAlertsLoading(true);
     try {
       const url = new URL(`${API_BASE}/alerts`);
       url.searchParams.set('limit', String(alertLimit));
-      url.searchParams.set('offset', '0');
-
-      const res = await fetch(url.toString(), { method: 'GET' });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} — ${txt || 'Erreur alerts'}`);
-      }
-
+      const res = await fetch(url.toString());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const list = (data.alerts ?? data.items ?? data.results ?? data ?? []) as AlertEvent[];
+      const list = data.alerts ?? data.items ?? data.results ?? data ?? [];
       setAlerts(Array.isArray(list) ? list : []);
-    } catch (e: any) {
-      setError(e?.message ?? 'Erreur inconnue (alerts)');
-    } finally {
-      setAlertsLoading(false);
-    }
+    } catch {} finally { setAlertsLoading(false); }
   }, [alertLimit]);
 
   const refreshAll = useCallback(async () => {
-    setNotice(null);
-    await Promise.all([fetchAssets(), fetchStats(), fetchRecentAlerts()]);
-    setNotice('Données rafraîchies.');
-    setTimeout(() => setNotice(null), 2200);
-  }, [fetchAssets, fetchStats, fetchRecentAlerts]);
-
-  /* ──────────────────────────────────────────────────────────────
-     Actions
-  ─────────────────────────────────────────────────────────────── */
+    await Promise.all([fetchAssets(), fetchStats(), fetchAlerts()]);
+    setNotice('Données mises à jour'); setTimeout(() => setNotice(null), 2000);
+  }, [fetchAssets, fetchStats, fetchAlerts]);
 
   const refreshAsset = useCallback(async (symbol: string) => {
-    setError(null);
-    setNotice(null);
-
     try {
-      const res = await fetch(`${API_BASE}/assets/${encodeURIComponent(symbol)}/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch(`${API_BASE}/assets/${encodeURIComponent(symbol)}/refresh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ timeframe: 'H4', force: false }),
       });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} — ${txt || 'Erreur refresh asset'}`);
-      }
-
-      setNotice(`Refresh demandé: ${symbol}`);
-      setTimeout(() => setNotice(null), 2200);
-
-      // refresh list to reflect last_analysis_at changes soon
-      await fetchAssets();
-      await fetchStats();
-    } catch (e: any) {
-      setError(e?.message ?? 'Erreur refresh asset');
-    }
-  }, [fetchAssets, fetchStats]);
-
-  /* ──────────────────────────────────────────────────────────────
-     Effects: initial load + auto refresh
-  ─────────────────────────────────────────────────────────────── */
-
-  useEffect(() => {
-    fetchAssets();
+      setNotice(`Analyse lancée : ${symbol}`); setTimeout(() => setNotice(null), 2000);
+      setTimeout(fetchAssets, 1000);
+    } catch (e: any) { setError(e?.message); }
   }, [fetchAssets]);
 
+  useEffect(() => { fetchAssets(); }, [fetchAssets]);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+  useEffect(() => { fetchAlerts(); }, [fetchAlerts]);
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
-
-  useEffect(() => {
-    fetchRecentAlerts();
-  }, [fetchRecentAlerts]);
-
-  // optional periodic refresh (light): stats + alerts
-  useEffect(() => {
-    const t = setInterval(() => {
-      fetchStats();
-      fetchRecentAlerts();
-    }, 30_000);
+    const t = setInterval(() => { fetchStats(); fetchAlerts(); }, 30000);
     return () => clearInterval(t);
-  }, [fetchStats, fetchRecentAlerts]);
-
-  /* ──────────────────────────────────────────────────────────────
-     WebSocket: live alerts + price updates
-  ─────────────────────────────────────────────────────────────── */
+  }, [fetchStats, fetchAlerts]);
 
   useEffect(() => {
-    let alive = true;
-    let ws: WebSocket | null = null;
-    let retry = 0;
-    let retryTimer: any = null;
-
+    let alive = true; let ws: WebSocket | null = null; let retry = 0; let timer: any;
     const connect = () => {
       if (!alive) return;
       setWsStatus('CONNECTING');
-
-      ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
+      ws = new WebSocket(WS_URL); wsRef.current = ws;
       ws.onopen = () => {
-        if (!alive) return;
-        retry = 0;
-        setWsStatus('CONNECTED');
-        const subAlerts: WSIn = { type: 'subscribe', room: 'alerts' };
-        const subPrices: WSIn = { type: 'subscribe', room: 'prices' };
-        ws?.send(JSON.stringify(subAlerts));
-        ws?.send(JSON.stringify(subPrices));
-        ws?.send(JSON.stringify({ type: 'ping' } satisfies WSIn));
+        if (!alive) return; retry = 0; setWsStatus('CONNECTED');
+        ws?.send(JSON.stringify({ type: 'subscribe', room: 'alerts' }));
+        ws?.send(JSON.stringify({ type: 'subscribe', room: 'prices' }));
       };
-
       ws.onmessage = (evt) => {
         try {
-          const msg = JSON.parse(evt.data) as WSOut;
-
+          const msg = JSON.parse(evt.data);
           if (msg?.type === 'alert' && msg.data) {
-            const ev = msg.data as AlertEvent;
-            setAlerts((prev) => {
-              const merged = [ev, ...prev];
-              // dedupe by id if present
-              const seen = new Set<string>();
-              const out: AlertEvent[] = [];
-              for (const a of merged) {
-                const key = a.id ?? `${a.symbol}-${a.title}-${a.created_at}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                out.push(a);
-                if (out.length >= alertLimit) break;
-              }
+            setAlerts(prev => {
+              const next = [msg.data, ...prev]; const seen = new Set<string>(); const out: AlertEvent[] = [];
+              for (const a of next) { const k = a.id ?? `${a.symbol}-${a.created_at}`; if (!seen.has(k)) { seen.add(k); out.push(a); } if (out.length >= alertLimit) break; }
               return out;
             });
           }
-
           if (msg?.type === 'price_update' && msg.data) {
-            const { symbol, price } = msg.data as any;
-            if (!symbol || typeof price !== 'number') return;
-            const sym = String(symbol).toUpperCase();
-
-            // update asset price locally (if present)
-            setAssets((prev) =>
-              prev.map((a) => (a.symbol.toUpperCase() === sym ? { ...a, last_price: price } : a))
-            );
+            const { symbol, price } = msg.data;
+            if (symbol && typeof price === 'number') { const sym = String(symbol).toUpperCase(); setAssets(prev => prev.map(a => a.symbol.toUpperCase() === sym ? { ...a, last_price: price } : a)); }
           }
-        } catch {
-          // ignore non-json
-        }
+        } catch {}
       };
-
-      ws.onclose = () => {
-        if (!alive) return;
-        setWsStatus('DISCONNECTED');
-
-        const delay = Math.min(3000 + retry * 1500, 12_000);
-        retry += 1;
-        retryTimer = setTimeout(connect, delay);
-      };
-
-      ws.onerror = () => {
-        // onclose handles retry
-      };
+      ws.onclose = () => { if (!alive) return; setWsStatus('DISCONNECTED'); timer = setTimeout(connect, Math.min(3000 + retry * 1500, 12000)); retry++; };
     };
-
     connect();
-
-    return () => {
-      alive = false;
-      if (retryTimer) clearTimeout(retryTimer);
-      try { ws?.close(); } catch {}
-      wsRef.current = null;
-    };
+    return () => { alive = false; clearTimeout(timer); try { ws?.close(); } catch {} wsRef.current = null; };
   }, [alertLimit]);
 
-  /* ──────────────────────────────────────────────────────────────
-     Render
-  ─────────────────────────────────────────────────────────────── */
+  const MONO = "'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace";
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-white">
-      {/* background glow */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-24 left-1/3 h-[420px] w-[420px] rounded-full bg-[#E85D1A]/15 blur-[80px]" />
-        <div className="absolute top-1/3 right-1/4 h-[360px] w-[360px] rounded-full bg-[#378ADD]/12 blur-[90px]" />
-        <div className="absolute bottom-0 left-1/4 h-[360px] w-[360px] rounded-full bg-[#1D9E75]/10 blur-[90px]" />
+    <div className="relative min-h-screen p-5 md:p-6" style={{ fontFamily: MONO }}>
+
+      {/* Ticker bar */}
+      <div className="mb-5 flex items-center justify-between gap-4 rounded-xl px-4 py-2.5"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold" style={{ color: '#e85d1a', letterSpacing: '0.15em' }}>IGNIS</span>
+          <span className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+          <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Supply & Demand Intelligence</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className={cn('h-1.5 w-1.5 rounded-full', wsStatus === 'CONNECTED' ? 'animate-pulse' : '')}
+              style={{ background: wsStatus === 'CONNECTED' ? '#10b981' : wsStatus === 'CONNECTING' ? '#38bdf8' : '#f43f5e', boxShadow: wsStatus === 'CONNECTED' ? '0 0 6px #10b981' : 'none' }} />
+            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              {wsStatus === 'CONNECTED' ? 'Live' : wsStatus === 'CONNECTING' ? 'Connexion…' : 'Hors ligne'}
+            </span>
+          </div>
+          <button onClick={refreshAll} className="text-[11px] px-3 py-1 rounded-lg transition-all"
+            style={{ background: 'rgba(232,93,26,0.12)', border: '1px solid rgba(232,93,26,0.25)', color: '#e85d1a' }}>
+            ↻ Actualiser
+          </button>
+        </div>
       </div>
 
-      <div className="relative mx-auto max-w-[1600px] px-6 py-6">
-        {/* Header */}
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
-          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-[20px] px-5 py-4 shadow-[0_20px_70px_rgba(0,0,0,0.55)]">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-xl font-semibold tracking-tight">IGNIS — Dashboard</h1>
-                  <span
-                    className={cn(
-                      'rounded-full border px-3 py-1 text-xs font-medium',
-                      wsStatus === 'CONNECTED'
-                        ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200'
-                        : wsStatus === 'CONNECTING'
-                          ? 'border-sky-500/20 bg-sky-500/10 text-sky-200'
-                          : 'border-rose-500/20 bg-rose-500/10 text-rose-200'
-                    )}
-                  >
-                    WS: {wsStatus}
-                  </span>
+      {/* Notices */}
+      <AnimatePresence>
+        {notice && <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', color: '#10b981' }}>✓ {notice}</motion.div>}
+        {error && <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e' }}>✕ {error}</motion.div>}
+      </AnimatePresence>
 
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-                    API: {API_BASE}
-                  </span>
-                </div>
+      {/* KPI Grid */}
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+        className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <KPICard label="Assets actifs" value={statsLoading ? '…' : String(kpis.active)} sub="dans la watchlist" color="#e85d1a" delay={0} icon="◈" />
+        <KPICard label="Analysés" value={statsLoading ? '…' : String(kpis.withAnalysis)} sub="avec une analyse" color="#378add" delay={0.05} icon="◎" />
+        <KPICard label="Couverture" value={statsLoading ? '…' : `${kpis.coverage}%`} sub="des actifs analysés" color="#8b5cf6" delay={0.1} icon="◐" progress={kpis.coverage} />
+        <KPICard label="Setups valides" value={statsLoading ? '…' : String(kpis.valid)} sub="opportunités actives" color="#10b981" delay={0.15} icon="✦" accent />
+        <KPICard label="En attente" value={statsLoading ? '…' : String(kpis.pending)} sub="à surveiller" color="#f59e0b" delay={0.2} icon="◇" />
+        <KPICard label="Alertes" value={alertsLoading ? '…' : String(alerts.length)} sub="dans le feed" color="#f43f5e" delay={0.25} icon="⚡" pulse={alerts.length > 0 && wsStatus === 'CONNECTED'} />
+      </motion.div>
 
-                <div className="text-xs text-white/60 mt-1">
-                  Watchlist + setups + alertes live + actions rapides.
-                </div>
-              </div>
+      {/* Main grid */}
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <div className="xl:col-span-8 space-y-4">
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href="/scanner"
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition"
-                >
-                  Scanner
-                </Link>
-                <Link
-                  href="/journal"
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition"
-                >
-                  Journal
-                </Link>
-                <Link
-                  href="/ai"
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition"
-                >
-                  AI
-                </Link>
-                <Link
-                  href="/settings"
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition"
-                >
-                  Settings
-                </Link>
-
-                <button
-                  onClick={refreshAll}
-                  className="rounded-xl border border-white/10 bg-gradient-to-b from-[#E85D1A]/90 to-[#E85D1A]/40 px-4 py-2 text-sm font-medium text-white shadow-[0_12px_40px_rgba(232,93,26,0.25)] hover:from-[#E85D1A] hover:to-[#E85D1A]/50 transition"
-                >
-                  Refresh all
+          {/* Tabs */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {(['watchlist', 'alertes'] as const).map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)} className="px-4 py-2 rounded-lg text-xs font-medium tracking-wide uppercase transition-all"
+                  style={{ background: activeTab === tab ? 'rgba(232,93,26,0.15)' : 'transparent', color: activeTab === tab ? '#e85d1a' : 'rgba(255,255,255,0.4)', border: activeTab === tab ? '1px solid rgba(232,93,26,0.25)' : '1px solid transparent' }}>
+                  {tab === 'watchlist' ? `Watchlist (${filtered.length})` : `Alertes (${alerts.length})`}
+                </button>
+              ))}
+            </div>
+            {activeTab === 'watchlist' && (
+              <div className="flex items-center gap-2">
+                <select value={assetClass} onChange={e => { setOffset(0); setAssetClass(e.target.value as any); }}
+                  className="text-xs rounded-lg px-3 py-2 outline-none"
+                  style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>
+                  {['ALL','CRYPTO','STOCK','FOREX','INDEX','ETF','COMMODITY','OTHER'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <button onClick={() => { setOffset(0); setActiveOnly(p => !p); }} className="text-xs rounded-lg px-3 py-2 transition-all"
+                  style={{ background: activeOnly ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${activeOnly ? 'rgba(16,185,129,0.25)' : 'rgba(255,255,255,0.08)'}`, color: activeOnly ? '#10b981' : 'rgba(255,255,255,0.4)' }}>
+                  {activeOnly ? '● Actifs' : '○ Tous'}
                 </button>
               </div>
-            </div>
-
-            {(notice || error) && (
-              <div className="mt-4 grid grid-cols-1 gap-2">
-                {notice && (
-                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-                    {notice}
-                  </div>
-                )}
-                {error && (
-                  <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                    {error}
-                  </div>
-                )}
-              </div>
             )}
-
-            {/* KPIs */}
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-6">
-              <Stat label="Assets (active)" value={statsLoading ? '…' : `${keyKPIs.active}`} />
-              <Stat label="With analysis" value={statsLoading ? '…' : `${keyKPIs.withAnalysis}`} />
-              <Stat label="Coverage" value={statsLoading ? '…' : `${keyKPIs.coverage}%`} />
-              <Stat label="Valid setups" value={statsLoading ? '…' : `${keyKPIs.valid}`} accent />
-              <Stat label="Pending" value={statsLoading ? '…' : `${keyKPIs.pending}`} />
-              <Stat label="Alerts (loaded)" value={alertsLoading ? '…' : `${alerts.length}`} />
-            </div>
           </div>
-        </motion.div>
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-          {/* Watchlist */}
-          <div className="xl:col-span-8 space-y-5">
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-              <Card>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="text-base font-semibold">Watchlist</div>
-                    <div className="text-xs text-white/60 mt-1">
-                      Assets venant de la DB (<code>/assets</code>). Clique “Open” pour l’analyse.
+          {/* Search */}
+          {activeTab === 'watchlist' && (
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>⌕</span>
+              <input value={query} onChange={e => setQuery(e.target.value)}
+                placeholder="Rechercher un actif — symbole, nom, exchange…"
+                className="w-full rounded-xl pl-10 pr-10 py-3 text-sm outline-none"
+                style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)', fontFamily: MONO }}
+                onFocus={e => { (e.target as HTMLElement).style.borderColor = 'rgba(232,93,26,0.4)'; }}
+                onBlur={e => { (e.target as HTMLElement).style.borderColor = 'rgba(255,255,255,0.08)'; }} />
+              {query && <button onClick={() => setQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>✕</button>}
+            </div>
+          )}
+
+          {/* Content */}
+          <AnimatePresence mode="wait">
+            {activeTab === 'watchlist' && (
+              <motion.div key="wl" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                {assetsLoading ? (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {Array.from({ length: 6 }).map((_, i) => <div key={i} className="rounded-2xl animate-pulse h-44" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }} />)}
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <EmptyState icon="◈" title="Aucun actif trouvé"
+                    desc={query ? `Aucun résultat pour "${query}".` : "Va dans Paramètres → Assets pour ajouter des actifs à ta watchlist."}
+                    action={query ? <button onClick={() => setQuery('')} className="mt-3 text-xs px-4 py-2 rounded-xl" style={{ background: 'rgba(232,93,26,0.15)', border: '1px solid rgba(232,93,26,0.25)', color: '#e85d1a' }}>Effacer</button> : undefined} />
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {filtered.map((a, i) => <AssetCard key={a.symbol} asset={a} index={i} onRefresh={refreshAsset} onSelect={setSelectedAsset} />)}
+                  </div>
+                )}
+                {assetsTotal > limit && (
+                  <div className="mt-4 flex items-center justify-between">
+                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Page {page}/{pageCount} · {assetsTotal} actifs</span>
+                    <div className="flex gap-2">
+                      <button onClick={() => setOffset(p => Math.max(0, p - limit))} disabled={offset === 0} className="text-xs px-4 py-2 rounded-xl transition-all disabled:opacity-30" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>← Précédent</button>
+                      <button onClick={() => setOffset(p => Math.min((pageCount - 1) * limit, p + limit))} disabled={offset + limit >= assetsTotal} className="text-xs px-4 py-2 rounded-xl transition-all disabled:opacity-30" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>Suivant →</button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={assetClass}
-                      onChange={(e) => { setOffset(0); setAssetClass(e.target.value as any); }}
-                      className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                    >
-                      <option value="ALL">ALL</option>
-                      <option value="CRYPTO">CRYPTO</option>
-                      <option value="STOCK">STOCK</option>
-                      <option value="FOREX">FOREX</option>
-                      <option value="INDEX">INDEX</option>
-                      <option value="ETF">ETF</option>
-                      <option value="COMMODITY">COMMODITY</option>
-                      <option value="OTHER">OTHER</option>
-                    </select>
-
-                    <button
-                      onClick={() => { setOffset(0); setActiveOnly((p) => !p); }}
-                      className={cn(
-                        'rounded-xl border px-3 py-2 text-sm font-medium transition',
-                        activeOnly
-                          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-                          : 'border-zinc-500/25 bg-zinc-500/10 text-zinc-200'
-                      )}
-                      title="Filtre actif"
-                    >
-                      active: {activeOnly ? 'true' : 'false'}
-                    </button>
-
-                    <select
-                      value={limit}
-                      onChange={(e) => { setOffset(0); setLimit(Number(e.target.value)); }}
-                      className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                    >
-                      {[30, 60, 90, 120].map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-12">
-                  <div className="md:col-span-8">
-                    <Field label={`Search (${filteredAssets.length}/${assets.length})`}>
-                      <input
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="BTC, ETH, Binance, Apple…"
-                        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#E85D1A]/40"
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="md:col-span-4 flex items-end gap-2">
-                    <button
-                      onClick={() => setOffset((p) => Math.max(0, p - limit))}
-                      disabled={offset === 0}
-                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition disabled:opacity-50"
-                    >
-                      Prev
-                    </button>
-                    <button
-                      onClick={() => setOffset((p) => Math.min((pageCount - 1) * limit, p + limit))}
-                      disabled={offset + limit >= assetsTotal}
-                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition disabled:opacity-50"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-3 text-xs text-white/50">
-                  Page {page}/{pageCount} · total {assetsTotal} · source: <span className="text-white/65">{API_BASE}/assets</span>
-                </div>
-              </Card>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {assetsLoading && (
-                  <div className="col-span-full rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-white/60">
-                    Chargement des assets…
-                  </div>
                 )}
+              </motion.div>
+            )}
+            {activeTab === 'alertes' && (
+              <motion.div key="al" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+                {alertsLoading ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="rounded-2xl animate-pulse h-24" style={{ background: 'rgba(255,255,255,0.04)' }} />)
+                  : alerts.length === 0 ? <EmptyState icon="⚡" title="Aucune alerte" desc="Le feed WebSocket est actif. Les alertes apparaîtront ici en temps réel dès qu'elles seront déclenchées." />
+                  : <AnimatePresence initial={false}>{alerts.map(a => <AlertRow key={a.id ?? `${a.symbol}-${a.created_at}`} alert={a} />)}</AnimatePresence>}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
-                {!assetsLoading && filteredAssets.length === 0 && (
-                  <div className="col-span-full rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-white/60">
-                    Aucun asset ne match la recherche. Ajuste les filtres ou ajoute des assets dans Settings.
+        {/* Right panel */}
+        <div className="xl:col-span-4 space-y-4">
+          <Panel title="Guide rapide" icon="◉">
+            <div className="space-y-3">
+              {[
+                { step: '01', title: 'Ajouter des actifs', desc: "Paramètres → Assets pour créer ta watchlist (BTC, ETH, EURUSD…)", href: '/settings', color: '#e85d1a' },
+                { step: '02', title: 'Lancer le Scanner', desc: "Analyse multi-symboles avec scoring Supply & Demand automatique.", href: '/scanner', color: '#378add' },
+                { step: '03', title: 'Ouvrir une analyse', desc: "Clique 'Analyser →' sur un actif pour voir le chart, zones et structure.", href: '#', color: '#10b981' },
+                { step: '04', title: 'Configurer les alertes', desc: "Paramètres → Alertes pour recevoir des notifications en temps réel.", href: '/settings', color: '#8b5cf6' },
+              ].map(s => (
+                <Link key={s.step} href={s.href} className="flex items-start gap-3 rounded-xl p-3 transition-all group"
+                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'; }}>
+                  <span className="text-xs font-bold min-w-[20px]" style={{ color: s.color }}>{s.step}</span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold mb-0.5" style={{ color: 'rgba(255,255,255,0.85)' }}>{s.title}</div>
+                    <div className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,0.4)' }}>{s.desc}</div>
                   </div>
-                )}
+                  <span className="ml-auto text-xs opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: s.color }}>→</span>
+                </Link>
+              ))}
+            </div>
+          </Panel>
 
-                {filteredAssets.map((a) => {
-                  const setupScore = a.setup?.score ?? 0;
-                  const status = a.setup?.status;
-                  const z = a.setup?.zone_type;
-
+          {stats?.by_class && Object.keys(stats.by_class).length > 0 && (
+            <Panel title="Répartition" icon="◐">
+              <div className="space-y-2">
+                {Object.entries(stats.by_class).sort(([,a],[,b]) => b - a).map(([cls, count]) => {
+                  const pct = stats.total > 0 ? Math.round((count / stats.total) * 100) : 0;
+                  const colors: Record<string, string> = { CRYPTO: '#e85d1a', STOCK: '#378add', FOREX: '#10b981', INDEX: '#8b5cf6', ETF: '#f59e0b', COMMODITY: '#f43f5e', OTHER: '#71717a' };
+                  const col = colors[cls] ?? '#71717a';
                   return (
-                    <motion.div
-                      key={a.symbol}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={cn(
-                        'rounded-2xl border border-white/10 bg-gradient-to-b p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]',
-                        scoreGradient(setupScore)
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-base font-semibold truncate">
-                            {a.symbol}
-                            <span className="text-white/45 font-normal"> · {a.asset_class}</span>
-                          </div>
-                          <div className="text-xs text-white/60 truncate mt-1">
-                            {a.name || '—'} {a.exchange ? `· ${a.exchange}` : ''}
-                          </div>
-                        </div>
-
-                        <div className="text-right">
-                          <div className="text-xs text-white/60">Last</div>
-                          <div className="text-lg font-semibold">{fmt(a.last_price, 6)}</div>
-                        </div>
+                    <div key={cls}>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>{cls}</span>
+                        <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.35)' }}>{count} · {pct}%</span>
                       </div>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {status ? (
-                          <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium', statusPill(status))}>
-                            {status}
-                          </span>
-                        ) : (
-                          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/70">
-                            No setup
-                          </span>
-                        )}
-
-                        <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/75">
-                          Score {fmt(setupScore, 0)}%
-                        </span>
-
-                        {z && (
-                          <span
-                            className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/75"
-                            style={{ boxShadow: `0 0 0 1px ${zoneColor(z)} inset` }}
-                            title="Zone type"
-                          >
-                            <span
-                              className="inline-block h-2 w-2 rounded-full mr-2 align-middle"
-                              style={{ backgroundColor: zoneColor(z) }}
-                            />
-                            {z}
-                          </span>
-                        )}
-
-                        {a.setup?.pa_pattern && (
-                          <span className="rounded-full border border-[#378ADD]/25 bg-[#378ADD]/10 px-2.5 py-1 text-[11px] text-sky-200">
-                            PA {a.setup.pa_pattern}
-                          </span>
-                        )}
-
-                        {a.setup?.rr !== undefined && (
-                          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/70">
-                            RR {fmt(a.setup.rr, 2)}
-                          </span>
-                        )}
+                      <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8 }} className="h-full rounded-full" style={{ background: col }} />
                       </div>
-
-                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="text-[11px] uppercase tracking-wide text-white/45">Last analysis</div>
-                        <div className="text-xs text-white/70 mt-1">
-                          {a.last_analysis_at ? fmtDate(a.last_analysis_at) : '—'}
-                        </div>
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between gap-2">
-                        <Link
-                          href={`/analysis/${encodeURIComponent(a.symbol)}`}
-                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/10 transition"
-                        >
-                          Open →
-                        </Link>
-
-                        <button
-                          onClick={() => refreshAsset(a.symbol)}
-                          className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/15 transition"
-                          title="Demande une analyse backend (assets/{symbol}/refresh)"
-                        >
-                          Refresh
-                        </button>
-                      </div>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </div>
-            </motion.div>
+            </Panel>
+          )}
+
+          <Panel title="Accès rapides" icon="◈">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { href: '/scanner', label: 'Scanner', icon: '⊞', color: '#378add' },
+                { href: '/journal', label: 'Journal', icon: '▤', color: '#10b981' },
+                { href: '/ai', label: 'IGNIS AI', icon: '◈', color: '#8b5cf6' },
+                { href: '/settings', label: 'Paramètres', icon: '⚙', color: '#f59e0b' },
+              ].map(item => (
+                <Link key={item.href} href={item.href} className="flex flex-col items-center gap-2 rounded-xl py-4 text-center transition-all"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = `${item.color}15`; (e.currentTarget as HTMLElement).style.borderColor = `${item.color}30`; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.07)'; }}>
+                  <span className="text-lg" style={{ color: item.color }}>{item.icon}</span>
+                  <span className="text-xs" style={{ color: 'rgba(255,255,255,0.65)' }}>{item.label}</span>
+                </Link>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Connexion" icon="◎">
+            <div className="space-y-2 text-xs">
+              <StatusRow label="API Backend" value={API_BASE.replace(/https?:\/\//, '')} ok={!error} />
+              <StatusRow label="WebSocket Live" value={wsStatus === 'CONNECTED' ? 'Connecté' : wsStatus === 'CONNECTING' ? 'Connexion…' : 'Déconnecté'} ok={wsStatus === 'CONNECTED'} />
+            </div>
+            <div className="mt-3 pt-3 text-xs leading-relaxed" style={{ borderTop: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.3)' }}>
+              💡 Backend non connecté ? Lance <code className="px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>uvicorn main:app --port 8000</code> dans un terminal séparé.
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {selectedAsset && <AssetModal asset={selectedAsset} onClose={() => setSelectedAsset(null)} onRefresh={refreshAsset} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ── Sub components ── */
+
+function KPICard({ label, value, sub, color, delay, icon, accent, progress, pulse }: {
+  label: string; value: string; sub: string; color: string; delay: number; icon: string; accent?: boolean; progress?: number; pulse?: boolean;
+}) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay }}
+      className="rounded-2xl p-4 relative overflow-hidden"
+      style={{ background: accent ? `${color}10` : 'rgba(255,255,255,0.03)', border: `1px solid ${accent ? color + '25' : 'rgba(255,255,255,0.07)'}` }}>
+      {accent && <div className="absolute inset-0 opacity-20" style={{ background: `radial-gradient(ellipse at top left, ${color}40, transparent 70%)` }} />}
+      <div className="relative">
+        <div className="flex items-start justify-between mb-2">
+          <span style={{ color: `${color}cc` }}>{icon}</span>
+          {pulse && <span className="h-2 w-2 rounded-full animate-pulse" style={{ background: color, boxShadow: `0 0 8px ${color}` }} />}
+        </div>
+        <div className="text-2xl font-bold tabular-nums tracking-tight" style={{ color: accent ? color : 'rgba(255,255,255,0.92)', fontFamily: "'IBM Plex Mono', monospace", textShadow: accent ? `0 0 20px ${color}60` : 'none' }}>
+          {value}
+        </div>
+        <div className="text-xs font-medium mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>{label}</div>
+        <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>{sub}</div>
+        {progress !== undefined && (
+          <div className="mt-3 h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <motion.div initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 1, delay: delay + 0.3 }} className="h-full rounded-full" style={{ background: color }} />
           </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
 
-          {/* Right column: Alerts live + overview */}
-          <div className="xl:col-span-4 space-y-5">
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-              <Card>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-base font-semibold">Live alerts</div>
-                    <div className="text-xs text-white/60 mt-1">
-                      Feed live via WebSocket (<code>/ws</code>) + fallback HTTP (<code>/alerts</code>).
-                    </div>
-                  </div>
+function AssetCard({ asset: a, index, onRefresh, onSelect }: { asset: AssetResponse; index: number; onRefresh: (s: string) => void; onSelect: (a: AssetResponse) => void }) {
+  const st = a.setup?.status;
+  const meta = st ? STATUS_META[st] : null;
+  const zone = a.setup?.zone_type ? ZONE_META[a.setup.zone_type] : null;
+  const score = a.setup?.score ?? 0;
+  const barColor = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : '#f43f5e';
 
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={alertLimit}
-                      onChange={(e) => setAlertLimit(Number(e.target.value))}
-                      className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                      title="Nombre d’alertes conservées dans le feed"
-                    >
-                      {[15, 30, 50, 80].map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-
-                    <button
-                      onClick={fetchRecentAlerts}
-                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition"
-                    >
-                      Reload
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-2 max-h-[620px] overflow-auto pr-1">
-                  {alertsLoading && (
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
-                      Chargement des alertes…
-                    </div>
-                  )}
-
-                  {!alertsLoading && alerts.length === 0 && (
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
-                      Pas d’alertes. Utilise Settings → Alerts → Send test/emit pour tester.
-                    </div>
-                  )}
-
-                  <AnimatePresence initial={false}>
-                    {alerts.map((a) => (
-                      <motion.div
-                        key={a.id ?? `${a.symbol}-${a.title}-${a.created_at}`}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        className="rounded-2xl border border-white/10 bg-black/20 p-4"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-white/90 truncate">
-                              {a.title || a.alert_type}
-                              <span className="text-white/45 font-normal"> · {a.symbol} {a.timeframe}</span>
-                            </div>
-                            <div className="text-xs text-white/70 mt-1 whitespace-pre-wrap">
-                              {a.message}
-                            </div>
-                          </div>
-
-                          <div className="text-right">
-                            <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium', priorityPill(a.priority))}>
-                              {String(a.priority ?? '—').toUpperCase()}
-                            </span>
-                            <div className="text-[11px] text-white/50 mt-1">
-                              {fmtDate(a.created_at)}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between gap-2">
-                          <div className="text-[11px] text-white/50 truncate">
-                            type: <span className="text-white/70">{a.alert_type}</span>
-                            <span className="mx-2 text-white/25">·</span>
-                            channels: <span className="text-white/70">{(a.channels ?? []).join(', ') || '—'}</span>
-                          </div>
-
-                          <Link
-                            href={`/analysis/${encodeURIComponent(a.symbol)}`}
-                            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/10 transition"
-                          >
-                            Open →
-                          </Link>
-                        </div>
-
-                        <details className="mt-3">
-                          <summary className="cursor-pointer text-xs text-white/60 hover:text-white/80 transition">
-                            Payload
-                          </summary>
-                          <pre className="mt-2 rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white/75 overflow-auto">
-                            {JSON.stringify(a.payload ?? {}, null, 2)}
-                          </pre>
-                        </details>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </Card>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-              <Card>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-base font-semibold">Quick actions</div>
-                    <div className="text-xs text-white/60 mt-1">
-                      Accès rapide aux features clés.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 gap-3">
-                  <QuickLink
-                    href="/scanner"
-                    title="Run Scanner"
-                    desc="Scan multi-symbols multi-timeframes avec filtres score/status/PA."
-                    accent="orange"
-                  />
-                  <QuickLink
-                    href="/journal"
-                    title="Journal"
-                    desc="Ajouter/éditer/clôturer des trades + stats P&L."
-                    accent="green"
-                  />
-                  <QuickLink
-                    href="/ai"
-                    title="IGNIS AI"
-                    desc="Chat Ollama + rapports et résumés (streaming)."
-                    accent="blue"
-                  />
-                  <QuickLink
-                    href="/settings"
-                    title="Settings"
-                    desc="Assets CRUD + outils alerting + status/models Ollama."
-                    accent="zinc"
-                  />
-                </div>
-              </Card>
-            </motion.div>
+  return (
+    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: Math.min(index * 0.04, 0.4) }}
+      className="rounded-2xl p-4 relative overflow-hidden cursor-pointer"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(232,93,26,0.25)'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.07)'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+      onClick={() => onSelect(a)}>
+      <div className="absolute top-0 left-0 h-0.5 rounded-t-2xl" style={{ width: `${score}%`, background: barColor, boxShadow: `0 0 8px ${barColor}80` }} />
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold tracking-tight" style={{ color: 'rgba(255,255,255,0.95)', fontFamily: "'IBM Plex Mono', monospace" }}>{a.symbol}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }}>{a.asset_class}</span>
+          </div>
+          <div className="text-[11px] mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.name || a.exchange || '—'}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-bold tabular-nums" style={{ color: 'rgba(255,255,255,0.9)', fontFamily: "'IBM Plex Mono', monospace" }}>
+            {a.last_price != null ? fmt(a.last_price, a.last_price > 100 ? 2 : 6) : '—'}
           </div>
         </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {meta ? (
+          <span className="text-[11px] px-2 py-0.5 rounded-lg font-medium flex items-center gap-1" style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.color}30` }}>
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.dot }} />{meta.label}
+          </span>
+        ) : (
+          <span className="text-[11px] px-2 py-0.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.3)' }}>Pas d'analyse</span>
+        )}
+        {zone && <span className="text-[11px] px-2 py-0.5 rounded-lg" style={{ background: `${zone.color}10`, color: zone.color, border: `1px solid ${zone.color}25` }}>{zone.label}</span>}
+        {a.setup?.score != null && <span className="text-[11px] px-2 py-0.5 rounded-lg tabular-nums" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.45)' }}>Score {fmt(a.setup.score, 0)}%</span>}
+      </div>
+      <div className="text-[11px] mb-3 flex items-center gap-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+        <span>↻</span>
+        <span>{a.last_analysis_at ? `Il y a ${timeAgo(a.last_analysis_at)}` : 'Jamais analysé'}</span>
+      </div>
+      <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+        <Link href={`/analysis/${encodeURIComponent(a.symbol)}`}
+          className="flex-1 text-center text-xs py-2 rounded-xl transition-all font-medium"
+          style={{ background: 'rgba(232,93,26,0.12)', border: '1px solid rgba(232,93,26,0.25)', color: '#e85d1a' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(232,93,26,0.2)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(232,93,26,0.12)'; }}>
+          Analyser →
+        </Link>
+        <button onClick={() => onRefresh(a.symbol)} className="text-xs px-3 py-2 rounded-xl transition-all"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}
+          title="Relancer l'analyse backend"
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}>
+          ↻
+        </button>
+      </div>
+    </motion.div>
+  );
+}
 
-        <div className="mt-6 text-xs text-white/40">
-          Dashboard · Glass UI · dark-only · WS: <span className="text-white/60">{WS_URL}</span>
+function AlertRow({ alert: a }: { alert: AlertEvent }) {
+  const [open, setOpen] = useState(false);
+  const pm = PRIORITY_META[(a.priority ?? '').toUpperCase()] ?? PRIORITY_META.LOW;
+  return (
+    <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <div className="mt-1 h-2 w-2 rounded-full flex-shrink-0" style={{ background: pm.color, boxShadow: `0 0 6px ${pm.color}` }} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-sm font-bold" style={{ color: 'rgba(255,255,255,0.9)', fontFamily: "'IBM Plex Mono', monospace" }}>{a.symbol} <span className="text-xs font-normal" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.timeframe}</span></span>
+              <span className="text-[10px] px-2 py-0.5 rounded font-medium" style={{ background: pm.bg, color: pm.color }}>{(a.priority ?? '').toUpperCase()}</span>
+            </div>
+            <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.65)' }}>{a.title || a.alert_type}</div>
+            <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.message}</div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>{fmtDate(a.created_at)}</span>
+              <div className="flex gap-2">
+                <button onClick={() => setOpen(o => !o)} className="text-[11px] px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)' }}>{open ? '▲' : '▼'} Détails</button>
+                <Link href={`/analysis/${encodeURIComponent(a.symbol)}`} className="text-[11px] px-2 py-1 rounded-lg" style={{ background: 'rgba(232,93,26,0.1)', color: '#e85d1a' }}>Ouvrir →</Link>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+            <pre className="px-4 pb-4 text-[11px] overflow-auto" style={{ color: 'rgba(255,255,255,0.45)', borderTop: '1px solid rgba(255,255,255,0.06)' }}>{JSON.stringify(a.payload ?? {}, null, 2)}</pre>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function Panel({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <div className="flex items-center gap-2 mb-4">
+        <span style={{ color: '#e85d1a' }}>{icon}</span>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.55)', letterSpacing: '0.1em' }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatusRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+      <span style={{ color: 'rgba(255,255,255,0.4)' }}>{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: ok ? '#10b981' : '#f43f5e' }} />
+        <span className="tabular-nums truncate max-w-[140px]" style={{ color: ok ? 'rgba(255,255,255,0.65)' : '#f43f5e' }}>{value}</span>
       </div>
     </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Small UI components
-────────────────────────────────────────────────────────────── */
-
-function Card({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function EmptyState({ icon, title, desc, action }: { icon: string; title: string; desc: string; action?: React.ReactNode }) {
   return (
-    <div
-      className={cn(
-        'rounded-2xl border border-white/10 bg-white/5 backdrop-blur-[20px] shadow-[0_25px_80px_rgba(0,0,0,0.55)] p-5',
-        className
-      )}
-    >
-      {children}
+    <div className="rounded-2xl py-12 px-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
+      <div className="text-3xl mb-3" style={{ color: 'rgba(255,255,255,0.2)' }}>{icon}</div>
+      <div className="text-sm font-medium mb-2" style={{ color: 'rgba(255,255,255,0.55)' }}>{title}</div>
+      <div className="text-xs leading-relaxed max-w-sm mx-auto" style={{ color: 'rgba(255,255,255,0.3)' }}>{desc}</div>
+      {action}
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function AssetModal({ asset: a, onClose, onRefresh }: { asset: AssetResponse; onClose: () => void; onRefresh: (s: string) => void }) {
+  const st = a.setup?.status; const meta = st ? STATUS_META[st] : null; const zone = a.setup?.zone_type ? ZONE_META[a.setup.zone_type] : null;
   return (
-    <label className="block">
-      <div className="text-xs text-white/60 mb-1">{label}</div>
-      {children}
-    </label>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={cn('rounded-xl border border-white/10 bg-black/20 px-3 py-2', accent && 'bg-gradient-to-b from-white/10 to-black/20')}>
-      <div className="text-[11px] text-white/55">{label}</div>
-      <div className="text-sm font-semibold text-white/90 truncate">{value}</div>
-    </div>
-  );
-}
-
-function QuickLink({
-  href,
-  title,
-  desc,
-  accent,
-}: {
-  href: string;
-  title: string;
-  desc: string;
-  accent: 'orange' | 'blue' | 'green' | 'zinc';
-}) {
-  const accentCls =
-    accent === 'orange'
-      ? 'from-[#E85D1A]/30 to-transparent border-[#E85D1A]/15'
-      : accent === 'blue'
-        ? 'from-[#378ADD]/30 to-transparent border-[#378ADD]/15'
-        : accent === 'green'
-          ? 'from-[#1D9E75]/30 to-transparent border-[#1D9E75]/15'
-          : 'from-white/10 to-transparent border-white/10';
-
-  return (
-    <Link
-      href={href}
-      className={cn(
-        'rounded-2xl border bg-gradient-to-b p-4 transition',
-        accentCls,
-        'hover:bg-white/10'
-      )}
-    >
-      <div className="text-sm font-semibold text-white/90">{title}</div>
-      <div className="text-xs text-white/60 mt-1">{desc}</div>
-      <div className="text-xs text-white/70 mt-3">Open →</div>
-    </Link>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }} onClick={onClose}>
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        className="w-full max-w-md rounded-3xl p-6" style={{ background: '#0d0d14', border: '1px solid rgba(255,255,255,0.12)' }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <h2 className="text-xl font-bold" style={{ color: 'rgba(255,255,255,0.95)', fontFamily: "'IBM Plex Mono', monospace" }}>{a.symbol}</h2>
+            <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.name || '—'} · {a.asset_class}</p>
+          </div>
+          <button onClick={onClose} className="text-xl" style={{ color: 'rgba(255,255,255,0.3)' }}>✕</button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          {[
+            { l: 'Prix actuel', v: a.last_price != null ? fmt(a.last_price, 6) : '—' },
+            { l: 'Score', v: a.setup?.score != null ? `${fmt(a.setup.score, 0)}%` : '—' },
+            { l: 'Statut', v: meta?.label ?? 'Aucun' },
+            { l: 'Zone', v: zone?.label ?? '—' },
+            { l: 'Pattern PA', v: a.setup?.pa_pattern ?? '—' },
+            { l: 'Risk/Reward', v: a.setup?.rr != null ? fmt(a.setup.rr, 2) : '—' },
+          ].map(row => (
+            <div key={row.l} className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div className="text-[11px] mb-1" style={{ color: 'rgba(255,255,255,0.35)' }}>{row.l}</div>
+              <div className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)', fontFamily: "'IBM Plex Mono', monospace" }}>{row.v}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.3)' }}>Dernière analyse : {a.last_analysis_at ? fmtDate(a.last_analysis_at) : 'Jamais'}</div>
+        <div className="flex gap-3">
+          <Link href={`/analysis/${encodeURIComponent(a.symbol)}`} className="flex-1 text-center text-sm py-3 rounded-2xl font-semibold" style={{ background: 'rgba(232,93,26,0.2)', border: '1px solid rgba(232,93,26,0.4)', color: '#e85d1a' }}>Ouvrir l'analyse →</Link>
+          <button onClick={() => { onRefresh(a.symbol); onClose(); }} className="text-sm px-4 py-3 rounded-2xl" style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)' }}>↻ Refresh</button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
