@@ -103,7 +103,7 @@ export default function ScannerPage() {
     if (!timeframes.length) { setError('Sélectionne au moins 1 timeframe.'); return; }
     setError(null); setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/analysis/scan`, {
+      const res = await fetch(`${API_BASE}/analysis/batch/scan`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbols, timeframes, min_score: minScore, status_filter: statusFilter, pa_filter: paFilter, candle_limit: candleLimit }),
       });
@@ -509,7 +509,7 @@ export default function ScannerPage() {
           {/* Last run info */}
           {lastRunAt && (
             <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
-              Dernier scan : {new Date(lastRunAt).toLocaleString('fr-FR', { hour12: false })} · {API_BASE}/analysis/scan
+              Dernier scan : {new Date(lastRunAt).toLocaleString('fr-FR', { hour12: false })} · {API_BASE}/analysis/batch/scan
             </div>
           )}
         </div>
