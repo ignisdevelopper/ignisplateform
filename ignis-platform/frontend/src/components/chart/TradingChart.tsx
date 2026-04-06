@@ -23,6 +23,7 @@ import {
   type HistogramData,
   type IPriceLine,
   type LogicalRange,
+  type Logical,
 } from 'lightweight-charts';
 
 import SDZoneOverlay, { type SDZoneResult } from './SDZoneOverlay';
@@ -267,7 +268,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   const priceToY = useCallback((price: number) => {
     const s = candleSeriesRef.current;
     if (!s) return null;
-    return s.priceScale().priceToCoordinate(price);
+    return s.priceToCoordinate(price);
   }, []);
 
   const timeToX = useCallback((timeSec: number) => {
@@ -567,12 +568,11 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
 
     return () => {
       try {
-        unsubCrosshair?.();
       } catch {}
 
       try {
         ts.unsubscribeVisibleLogicalRangeChange?.(onRangeChange);
-        ts.unsubscribeVisibleTimeRangeChange?.(onRangeChange);
+        if (typeof ts.unsubscribeVisibleTimeRangeChange === "function") ts.unsubscribeVisibleTimeRangeChange(onRangeChange);
       } catch {}
 
       host.removeEventListener('wheel', onWheel);
@@ -702,13 +702,12 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
         const from = Math.max(0, bestIdx - barsAround);
         const to = Math.min(times.length - 1, bestIdx + Math.floor(barsAround * 0.35));
 
-        const range: LogicalRange = { from, to };
+        const range: LogicalRange = { from: from as Logical, to: to as Logical };
         try {
           chart.timeScale().setVisibleLogicalRange(range);
         } catch {
-          const tr: TimeRange = { from: times[from] as any, to: times[to] as any };
+          
           try {
-            chart.timeScale().setVisibleRange(tr);
           } catch {}
         }
 

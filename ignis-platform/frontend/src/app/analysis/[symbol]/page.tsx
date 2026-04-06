@@ -17,7 +17,7 @@ import {
   type UTCTimestamp,
   type CandlestickData,
   type SeriesMarker,
-  type PriceLine,
+  type IPriceLine,
 } from 'lightweight-charts';
 
 /* ──────────────────────────────────────────────────────────────
@@ -263,9 +263,9 @@ function scoreToGradient(score: number) {
 ────────────────────────────────────────────────────────────── */
 
 type ChartOverlay = {
-  zoneLines: PriceLine[];
-  dpLines: PriceLine[];
-  klLines: PriceLine[];
+  zoneLines: IPriceLine[];
+  dpLines: IPriceLine[];
+  klLines: IPriceLine[];
 };
 
 function TradingChart({
@@ -347,7 +347,7 @@ function TradingChart({
     clearOverlays();
 
     // Zones: draw top/bottom as price lines
-    const zoneLines: PriceLine[] = [];
+    const zoneLines: IPriceLine[] = [];
     for (const z of zones) {
       const col = zoneColor(z.zone_type);
       const isSelected = selectedZoneId === z.id;
@@ -376,7 +376,7 @@ function TradingChart({
     }
 
     // Decision points: dotted lines
-    const dpLines: PriceLine[] = [];
+    const dpLines: IPriceLine[] = [];
     for (const dp of decisionPoints ?? []) {
       dpLines.push(
         series.createPriceLine({
@@ -391,7 +391,7 @@ function TradingChart({
     }
 
     // Key levels: dashed lines
-    const klLines: PriceLine[] = [];
+    const klLines: IPriceLine[] = [];
     for (const kl of keyLevels ?? []) {
       klLines.push(
         series.createPriceLine({
@@ -452,7 +452,7 @@ function TradingChart({
 
     const unsub = chart.subscribeCrosshairMove((param) => {
       if (!onCrosshairPrice) return;
-      const price = param?.seriesData?.get(series as any)?.close;
+      const price = (param?.seriesData?.get(series as any) as any)?.close;
       if (typeof price === 'number') onCrosshairPrice(price);
       else onCrosshairPrice(null);
     });
@@ -464,7 +464,7 @@ function TradingChart({
     ro.observe(containerRef.current);
 
     return () => {
-      try { unsub?.(); } catch {}
+      // unsubscribe handled by chart.remove()
       ro.disconnect();
       chart.remove();
       chartRef.current = null;

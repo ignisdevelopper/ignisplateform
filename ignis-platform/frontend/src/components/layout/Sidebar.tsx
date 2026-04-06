@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { cn } from '@/lib/utils';
+import { cn } from '../../lib/utils';
 
 type StatusState = 'ONLINE' | 'OFFLINE' | 'CONNECTING' | 'DEGRADED' | 'UNKNOWN';
 

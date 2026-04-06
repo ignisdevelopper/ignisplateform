@@ -3,7 +3,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '@/lib/utils';
+import { cn } from '../../lib/utils';
 
 type BaseType = 'RBR' | 'DBD' | 'RBD' | 'DBR';
 
@@ -360,7 +360,7 @@ export default function BaseScorePanel({
                           <MiniStat label="Formed" value={fmtTs(selected.formed_at)} />
                           <MiniStat label="Zone top" value={(selected.zone_top)?.toFixed(6) ?? '—'} />
                           <MiniStat label="Zone bot" value={(selected.zone_bot)?.toFixed(6) ?? '—'} />
-                          <MiniStat label="Range" value={(Math.abs(selected.zone_top - selected.zone_bot)?.toFixed(2) ?? '—', 6)} />
+                          <MiniStat label="Range" value={(Math.abs(selected.zone_top - selected.zone_bot))?.toFixed(6) ?? '—'} />
                           <MiniStat label="Engulf ratio" value={(selected.engulfment_ratio)?.toFixed(2) ?? '—'} />
                         </div>
 

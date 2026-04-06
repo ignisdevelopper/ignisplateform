@@ -154,7 +154,7 @@ export default function PAPanel({
       ['stop', m.stop ?? m.sl],
       ['rr', m.rr ?? m.risk_reward],
       ['note', m.note ?? m.reason ?? m.comment],
-    ].filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+    ].filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '') as Array<[string, any]>;
 
     if (candidates.length) return candidates.map(([k, v]) => ({ k, v }));
 
